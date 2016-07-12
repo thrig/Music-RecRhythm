@@ -1,0 +1,12 @@
+Changes
+LICENSE
+MANIFEST
+Makefile.PL
+README
+eg/rhythm2midi
+lib/Music/RecRhythm.pm
+t/00-load.t
+t/100-basics.t
+t/200-recursion-see-recursion.t
+t/pod-coverage.t
+t/pod.t

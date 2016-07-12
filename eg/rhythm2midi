@@ -1,0 +1,74 @@
+#!/usr/bin/env perl
+
+use 5.10.0;
+use Getopt::Long qw(GetOptions);
+use MIDI;
+use Music::RecRhythm;
+
+GetOptions(
+    'duration|d=i' => \my $Flag_Duration,
+    'file|f=s'     => \my $Flag_MIDI_File,
+    'repeat|r=i'   => \my $Flag_Repeats,
+    'silent=s'     => \my $Flag_Silent_Tracks,
+) or exit 64;
+
+my @sets;
+
+for my $arg (@ARGV) {
+    push @sets, Music::RecRhythm->new( set => [ integers_from($arg) ] );
+    $sets[-2]->next( $sets[-1] ) if @sets > 1;
+}
+if ($Flag_Silent_Tracks) {
+    for my $n ( integers_from($Flag_Silent_Tracks) ) {
+        $sets[$n]->is_silent(1);
+    }
+}
+$Flag_Duration ||= 96;
+$Flag_MIDI_File //= 'out.midi';
+$Flag_Repeats ||= 1;
+
+warn sprintf "info: beatproduct=%d levels=%d\n",
+  map { $sets[0]->$_ } qw/beatproduct levels/;
+
+my @MIDI_Tracks = map { new_track_on_the_block() } 1 .. $sets[0]->levels;
+
+# though it may be more efficient to merely duplicate the MIDI events
+# directly rather than recursing multiple times...
+for my $repeatnum ( 1 .. $Flag_Repeats ) {
+    $sets[0]->recurse( \&call_me_midi );
+}
+
+my $opus = MIDI::Opus->new( { ticks => 384, tracks => \@MIDI_Tracks } );
+$opus->write_to_file($Flag_MIDI_File);
+
+sub call_me_midi {
+    my ( $rset, $param ) = @_;
+    play_note(
+        $MIDI_Tracks[ $param->{level} ],
+        {   chan  => $param->{level},
+            dur   => $param->{duration} * $Flag_Duration,
+            pitch => 48 + 12 * $param->{level},
+        }
+    );
+}
+
+sub integers_from {
+    my ($str) = @_;
+    $str =~ m/(\d+)/ag;
+}
+
+sub new_track_on_the_block {
+    my $track = MIDI::Track->new;
+    $track->new_event( 'set_tempo', 0, 500000 );
+    $track->new_event( 'patch_change', 0, 0, 0 );
+    return $track;
+}
+
+sub play_note {
+    my ( $track, $param ) = @_;
+    $param->{chan}  //= 0;
+    $param->{velo}  //= 100;
+    $param->{pitch} //= 99;
+    $track->new_event( 'note_on', 0, map { $param->{$_} } qw/chan pitch velo/ );
+    $track->new_event( 'note_off', map( { $param->{$_} } qw/dur chan pitch/ ), 0 );
+}
