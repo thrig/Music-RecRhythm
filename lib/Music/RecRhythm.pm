@@ -16,12 +16,10 @@ use namespace::clean;
 use List::Util qw(sum0);
 use Scalar::Util qw(looks_like_number);
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 with 'MooX::Rebuild';
 
-# probably should enforce an isa here so recurse doesn't need to check
-# things or blindly dive.
 has next => ( is => 'rw', );
 
 has set => (
@@ -61,12 +59,25 @@ sub BUILD {
 #
 # METHODS
 
+sub audible_levels {
+    my ($self) = @_;
+    my $count = 0;
+    while ($self) {
+        $count++ unless $self->is_silent;
+        $self = $self->next;
+    }
+    return $count;
+}
+
 sub beatfactor {
     my ($self) = @_;
     my %factors;
+    my $prev_sum = 1;
     while ($self) {
-        @factors{ @{ $self->set }, $self->sum } = ();
-        $self = $self->next;
+        my $sum = $self->sum * $prev_sum;
+        @factors{ @{ $self->set }, $sum } = ();
+        $self     = $self->next;
+        $prev_sum = $sum;
     }
     return Math::BigInt->bone()->blcm( keys %factors )->numify;
 }
@@ -84,16 +95,17 @@ sub levels {
 sub recurse {
     my ( $self, $callback, $extra ) = @_;
     my $bf = $self->beatfactor;
-    _recurse( $self, $callback, $extra, $bf, 0 );
+    _recurse( $self, $callback, $extra, $bf, 0, 0 );
 }
 
 sub _recurse {
-    my ( $rset, $callback, $extra, $totaltime, $level ) = @_;
-    my %param = ( level => $level );
+    my ( $rset, $callback, $extra, $totaltime, $level, $audible_level ) = @_;
+    my %param = ( level => $level, audible_level => $audible_level );
     for my $p (qw/next set/) {
         $param{$p} = $rset->$p;
     }
-    my $sil      = $rset->is_silent;
+    my $sil = $rset->is_silent;
+    $audible_level++ if !$sil;
     my $unittime = $totaltime / $rset->sum;
     for my $n ( 0 .. $#{ $param{set} } ) {
         $param{beat}     = $param{set}[$n];
@@ -102,7 +114,8 @@ sub _recurse {
         if ( !$sil ) {
             $callback->( $rset, \%param, $extra );
         }
-        _recurse( $param{next}, $callback, $extra, $param{duration}, $level + 1 )
+        _recurse( $param{next}, $callback, $extra, $param{duration}, $level + 1,
+            $audible_level )
           if defined $param{next};
     }
 }
@@ -139,7 +152,7 @@ Music::RecRhythm - rhythms within rhythms within rhythms
 
 =head1 DESCRIPTION
 
-A utility module for recusive rhythm construction, where a B<set> is
+A utility module for recursive rhythm construction, where a B<set> is
 defined as an array reference of positive integers (beats). Multiple
 such objects may be linked through the B<next> attribute, which the
 B<recurse> method follows. Each B<next> rhythm I<is played out in full
@@ -193,6 +206,11 @@ is changed.
 
 =over 4
 
+=item B<audible_levels>
+
+Returns the number of audible levels (those that do not set
+B<is_silent>) recursion will take place over. See also B<levels>.
+
 =item B<beatfactor>
 
 Lowest common multiple of the beats and sum of the beats such that the
@@ -206,7 +224,8 @@ be problematic.
 Returns the number of levels recursion will take place over. May be
 useful prior to a B<recurse> call if an array of MIDI tracks (one for
 each level) need be created, or similar. Note that the actual level
-numbers may be discontiguous if any of the objects enable B<is_silent>.
+numbers may be discontiguous if any of the objects enable B<is_silent>,
+hence also the B<audible_levels> method.
 
 =item B<recurse> I<coderef> I<extra>
 
@@ -221,6 +240,11 @@ to be (reference, object, whatever). The parameters, which are read-
 write (though probably should not be changed on the fly), include:
 
 =over 4
+
+=item I<audible_level>
+
+Level of recursion, counting from C<0> but only incremented when
+B<is_silent> is not set. See I<level> for the exact level of recursion.
 
 =item I<beat>
 
@@ -239,7 +263,8 @@ Index of the current beat in the I<set>, numbered from 0 on up.
 =item I<level>
 
 Level of recursion, C<0> for the first level, C<1> for the second, and
-so forth. The level numbers will have gaps if B<is_silent> is set.
+so forth. The level numbers will have gaps if B<is_silent> is set, see
+I<audible_level> if that is a problem.
 
 =item I<next>
 
@@ -278,11 +303,28 @@ L<https://github.com/thrig/Music-RecRhythm>
 
 =head2 Known Issues
 
-Loops created with B<next> calls will run forever as B<beatproduct>,
-B<levels>, and B<recurse> do not check for loops created by B<next>
-calls. If this is a risk for generated code, wrap these calls with
+=over 4
+
+=item *
+
+B<beatfactor> may still be buggy, and does not produce minimum factors
+in various cases (see C<t/200-recursion-see-recursion.t>). A fudge
+factor to get the appropriate MIDI duration for a specific set of rhythm
+sets will likely be necessary (see C<eg/rhythm2midi>).
+
+=item *
+
+Loops created with B<next> calls will cause various methods to then run
+forever. If this is a risk for generated code, wrap these calls with
 C<alarm> to abort them should they run for too long (or add loop
-detection somehow).
+detection somehow (or don't create loops via B<next> calls, sheesh!)).
+
+=item *
+
+B<next> should be checked via C<isa> or somesuch to audit that passed
+objects are suitable to be used in B<beatfactor> and B<recurse>.
+
+=back
 
 =head1 SEE ALSO
 
