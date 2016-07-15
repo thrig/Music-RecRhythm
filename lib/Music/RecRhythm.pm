@@ -10,6 +10,7 @@ use 5.10.0;
 use strict;
 use warnings;
 
+use Math::BigInt ();
 use Moo;
 use namespace::clean;
 use List::Util qw(sum0);
@@ -17,14 +18,10 @@ use Scalar::Util qw(looks_like_number);
 
 our $VERSION = '0.01';
 
-# for ->rebuild a.k.a. object cloning
 with 'MooX::Rebuild';
 
-# NOTE a Graph module may be more suitable if more complicated
-# structures of rhythm sets need be built up, as this just allows for a
-# simple hierarchy (or sequence, depending on how the results of the
-# recursion are mapped to time). TODO probably should enforce an isa
-# here so recurse doesn't need to check things or blindly dive.
+# probably should enforce an isa here so recurse doesn't need to check
+# things or blindly dive.
 has next => ( is => 'rw', );
 
 has set => (
@@ -64,50 +61,49 @@ sub BUILD {
 #
 # METHODS
 
-sub beatproduct {
+sub beatfactor {
     my ($self) = @_;
-    my $product = 1;
+    my %factors;
     while ($self) {
-        $product *= $self->count;
+        @factors{ @{ $self->set }, $self->sum } = ();
         $self = $self->next;
     }
-    return $product;
+    return Math::BigInt->bone()->blcm( keys %factors )->numify;
 }
 
 sub levels {
     my ($self) = @_;
-    my $levels = 0;
+    my $count = 0;
     while ($self) {
-        $levels++;
+        $count++;
         $self = $self->next;
     }
-    return $levels;
+    return $count;
 }
 
 sub recurse {
-    my ( $self, $callback ) = @_;
-    _recurse( $self, $callback, $self->beatproduct, 0 );
+    my ( $self, $callback, $extra ) = @_;
+    my $bf = $self->beatfactor;
+    _recurse( $self, $callback, $extra, $bf, 0 );
 }
 
 sub _recurse {
-    my ( $rset, $callback, $totaltime, $level ) = @_;
-    my %param = ( level => $level, totaltime => $totaltime );
+    my ( $rset, $callback, $extra, $totaltime, $level ) = @_;
+    my %param = ( level => $level );
     for my $p (qw/next set/) {
         $param{$p} = $rset->$p;
     }
-    my $next = $param{next};
     my $sil      = $rset->is_silent;
     my $unittime = $totaltime / $rset->sum;
     for my $n ( 0 .. $#{ $param{set} } ) {
         $param{beat}     = $param{set}[$n];
         $param{index}    = $n;
-        my $dur = $param{duration} = int( $unittime * $param{beat} );
+        $param{duration} = int( $unittime * $param{beat} );
         if ( !$sil ) {
-            # TODO think about whether and if so how to return output
-            # from the callback and then all of the calls to this sub
-            $callback->( $rset, \%param );
+            $callback->( $rset, \%param, $extra );
         }
-        _recurse( $next, $callback, $dur, $level + 1 ) if defined $next;
+        _recurse( $param{next}, $callback, $extra, $param{duration}, $level + 1 )
+          if defined $param{next};
     }
 }
 
@@ -120,18 +116,6 @@ sub validate_set {
     return 1;
 }
 
-########################################################################
-#
-# CALLBACKS
-#
-# TODO put these in a different module file so don't need to load them?
-# probably depends on how long the code is...
-
-#sub callback_midi {
-#  my ($rset, $param) = @_;
-#  ...
-#}
-
 1;
 __END__
 
@@ -143,13 +127,13 @@ Music::RecRhythm - rhythms within rhythms within rhythms
 
   use Music::RecRhythm;
 
-  my $one = Music::RecRhythm->new( set => [qw/2 2 1 2 2 2 1/] );
+  my $one = Music::RecRhythm->new( set => [qw(2 2 1 2 2 2 1)] );
 
   my $two = $one->rebuild;  # clone the (original) object
 
-  $one->is_silent(1);
+  $one->is_silent(1);       # silent (but present)
 
-  $one->next($two);
+  $one->next($two);         # link for recursion
 
   $one->recurse( sub { ... } );
 
@@ -160,12 +144,8 @@ defined as an array reference of positive integers (beats). Multiple
 such objects may be linked through the B<next> attribute, which the
 B<recurse> method follows. Each B<next> rhythm I<is played out in full
 for each beat of the parent> rhythm, though whether these events are
-simultaneous or strung out is time is up to the callback code provided
+simultaneous or strung out in time depends on the callback code provided
 to B<recurse>.
-
-A rhythm may be made silent via the B<is_silent> attribute, in which
-case the callback code will not be called for each beat, though B<next>
-will be followed as per usual during B<recurse>.
 
 =head1 CONSTRUCTOR
 
@@ -183,15 +163,18 @@ is changed.
 
 =item B<is_silent>
 
-Boolean as to whether or not the callback function of B<recurse> will
-be invoked for beats of the set. False by default.
+Boolean as to whether or not the callback function of B<recurse> will be
+invoked for beats of the set. False by default. Recursion will continue
+through silent objects as per usual; B<is_silent> merely disables
+calling the callback, so "silent, but present" may be a more accurate
+term for this attribute.
 
 =item B<next>
 
 Optional next object to B<recurse> into. While often a
 C<Music::RecRhythm> object, any object that supports the necessary
 method calls could be used. Recursion will stop should this attribute be
-undefined (the default). Probably should not be changed in the middle of
+C<undef> (the default). Probably should not be changed in the middle of
 a B<recurse> call.
 
 =item B<set>
@@ -210,29 +193,32 @@ is changed.
 
 =over 4
 
-=item B<beatproduct>
+=item B<beatfactor>
 
-Returns the product of the B<count> for each object linked via B<next>.
-Used internally by B<recurse> to determine how much time each level
-must take.
-
-This method will run forever if a loop is created with B<next> calls.
-Don't do that, or use C<alarm> to time the code out. (Or C<extends> the
-module and use a hash to track which objects have been seen before.)
+Lowest common multiple of the beats and sum of the beats such that the
+durations at each level of recursion work out to the same overall
+duration. Hopefully. Uses L<Math::BigInt> though downgrades that via
+B<numify>, so integers larger than what perl can handle internally may
+be problematic.
 
 =item B<levels>
 
 Returns the number of levels recursion will take place over. May be
 useful prior to a B<recurse> call if an array of MIDI tracks (one for
-each level) need be created, or similar.
+each level) need be created, or similar. Note that the actual level
+numbers may be discontiguous if any of the objects enable B<is_silent>.
 
-=item B<recurse> I<coderef>
+=item B<recurse> I<coderef> I<extra>
 
 Iterates the beats of the B<set> and recurses through every B<next> for
 each beat, calling the I<coderef> unless B<is_silent> is true for the
-object. The I<coderef> is passed two arguments, first, the
-C<Music::RecRhythm> object which in turn is followed by a hash reference
-containing various parameters, including:
+object. I<extra> gets passed along to the callback I<coderef>.
+
+The I<coderef> is passed three arguments. First, the C<Music::RecRhythm>
+object, second, a hash reference containing various parameters (listed
+below) and finally I<extra>, a scalar that can be whatever you want it
+to be (reference, object, whatever). The parameters, which are read-
+write (though probably should not be changed on the fly), include:
 
 =over 4
 
@@ -242,10 +228,9 @@ The current beat, a member of the I<set> at the given I<index>.
 
 =item I<duration>
 
-A calculated duration based on the I<beat> and other factors, most
-notably the B<beatproduct> over the entire set of linked objects, if
-any, such that each B<next> object can be played entirely for each beat
-of the parent object without getting into fractional durations.
+A calculated duration based on the I<beat> and B<beatfactor> such that
+each B<next> object can be played entirely for each beat of the parent
+object without getting into fractional durations. Hopefully.
 
 =item I<index>
 
@@ -253,17 +238,18 @@ Index of the current beat in the I<set>, numbered from 0 on up.
 
 =item I<level>
 
-Level of recursion, C<0> for the first level, C<1> for the second,
-and so forth.
+Level of recursion, C<0> for the first level, C<1> for the second, and
+so forth. The level numbers will have gaps if B<is_silent> is set.
 
 =item I<next>
 
-If defined, the B<next> object that will be recursed into.
+The B<next> object, or C<undef> should this be the lowest level of
+recursion. Probably should not be changed on the fly.
 
 =item I<set>
 
 Array reference containing the beats of the current set, of which
-I<beat> is the current one at index I<index>.
+I<beat> is the current at index I<index>.
 
 =back
 

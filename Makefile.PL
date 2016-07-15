@@ -30,6 +30,7 @@ my %params = (
     },
     PREREQ_PM => {
         'List::Util'       => 1.26,    # for sum0
+        'Math::BigInt'     => 1.82,    # list-accepting form of glcm
         'MIDI'             => 0,
         'Moo'              => 0,
         'MooX::Rebuild'    => 0,
