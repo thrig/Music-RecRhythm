@@ -332,6 +332,9 @@ L<MIDI> or L<MIDI::Simple> may assist in the callback code to produce
 MIDI during the recursion. Consult the C<eg/> and C<t/> directories
 under this module's distribution for example code.
 
+L<Music::Voss> is a similar if different means of changing a rhythm
+over time.
+
 =head1 AUTHOR
 
 thrig - Jeremy Mates (cpan:JMATES) C<< <jmates at cpan.org> >>

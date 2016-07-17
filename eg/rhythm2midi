@@ -36,13 +36,13 @@ for my $arg (@ARGV) {
 if ($Flag_Pads) {
     @Pads = integers_from($Flag_Pads);
 }
-if ($Flag_Patches) {
+if (defined $Flag_Patches) {
     @Patches = integers_from($Flag_Patches);
 }
-if ($Flag_Pitches) {
+if (defined $Flag_Pitches) {
     @Pitches = integers_from($Flag_Pitches);
 }
-if ($Flag_Silent_Tracks) {
+if (defined $Flag_Silent_Tracks) {
     for my $n ( integers_from($Flag_Silent_Tracks) ) {
         $sets[$n]->is_silent(1);
     }
